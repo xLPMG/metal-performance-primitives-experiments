@@ -1,0 +1,105 @@
+// 03_matmul_bfbf_bf – host driver
+// bfloat × bfloat → bfloat. Uses f32_to_bf16 / bf16_to_f32 from half_utils.h.
+#import <Foundation/Foundation.h>
+#import <Metal/Metal.h>
+#include "common/bench.h"
+#include "common/half_utils.h"
+#include <cstring>
+#include <cmath>
+#include <vector>
+#include <algorithm>
+#include <cstdio>
+
+#ifndef METALLIB_PATH
+#define METALLIB_PATH "build/03_matmul_bfbf_bf/kernel.metallib"
+#endif
+
+static id<MTLDevice>               gDevice;
+static id<MTLCommandQueue>         gQueue;
+static id<MTLComputePipelineState> gPSO;
+
+static void setup() {
+    gDevice = MTLCreateSystemDefaultDevice();
+    gQueue  = [gDevice newCommandQueue];
+    NSError* err = nil;
+    id<MTLLibrary> lib = [gDevice newLibraryWithURL:[NSURL fileURLWithPath:@METALLIB_PATH] error:&err];
+    if (!lib) { NSLog(@"Library: %@", err); exit(1); }
+    id<MTLFunction> fn = [lib newFunctionWithName:@"matmul_bfbf_bf"];
+    if (!fn)  { puts("Function not found"); exit(1); }
+    gPSO = [gDevice newComputePipelineStateWithFunction:fn error:&err];
+    if (!gPSO) { NSLog(@"PSO: %@", err); exit(1); }
+}
+
+// CPU ref accumulates in float32, converts result to bf16 for comparison.
+static void cpu_ref(const std::vector<uint16_t>& A, const std::vector<uint16_t>& B,
+                    std::vector<uint16_t>& C, int M, int N, int K) {
+    for (int m = 0; m < M; ++m)
+        for (int n = 0; n < N; ++n) {
+            float acc = 0.f;
+            for (int k = 0; k < K; ++k)
+                acc += bf16_to_f32(A[m*K+k]) * bf16_to_f32(B[k*N+n]);
+            C[m*N+n] = f32_to_bf16(acc);
+        }
+}
+
+struct Bufs { id<MTLBuffer> A, B, C, p; };
+
+static Bufs makeBuffers(int M, int N, int K,
+                        const std::vector<uint16_t>& hA,
+                        const std::vector<uint16_t>& hB) {
+    auto sh = [&](const void* d, size_t n){
+        return [gDevice newBufferWithBytes:d length:n options:MTLResourceStorageModeShared]; };
+    Bufs b;
+    b.A = sh(hA.data(), M*K*2);
+    b.B = sh(hB.data(), K*N*2);
+    b.C = [gDevice newBufferWithLength:M*N*2 options:MTLResourceStorageModeShared];
+    uint32_t pv[3] = {(uint32_t)M,(uint32_t)N,(uint32_t)K};
+    b.p = sh(pv, 12);
+    return b;
+}
+
+static id<MTLCommandBuffer> dispatch(const Bufs& b, int M, int N) {
+    id<MTLCommandBuffer> cb = [gQueue commandBuffer];
+    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+    [enc setComputePipelineState:gPSO];
+    [enc setBuffer:b.A offset:0                  atIndex:0];
+    [enc setBuffer:b.B offset:0                  atIndex:1];
+    [enc setBuffer:b.C offset:0                  atIndex:2];
+    [enc setBuffer:b.p offset:0*sizeof(uint32_t) atIndex:3];
+    [enc setBuffer:b.p offset:1*sizeof(uint32_t) atIndex:4];
+    [enc setBuffer:b.p offset:2*sizeof(uint32_t) atIndex:5];
+    NSUInteger w = gPSO.threadExecutionWidth;
+    [enc dispatchThreadgroups:MTLSizeMake((N+31)/32,(M+63)/64,1)
+        threadsPerThreadgroup:MTLSizeMake(w*4,1,1)];
+    [enc endEncoding]; [cb commit]; return cb;
+}
+
+int main() {
+    setup();
+    printf("GPU: %s\n", [gDevice.name UTF8String]);
+    {
+        const int M=128,N=64,K=128;
+        std::vector<uint16_t> hA(M*K), hB(K*N);
+        for (int i=0;i<M*K;++i) hA[i]=f32_to_bf16((i%7)*0.1f);
+        for (int i=0;i<K*N;++i) hB[i]=f32_to_bf16((i%5)*0.2f);
+        std::vector<uint16_t> ref(M*N);
+        cpu_ref(hA,hB,ref,M,N,K);
+        Bufs b = makeBuffers(M,N,K,hA,hB);
+        [dispatch(b,M,N) waitUntilCompleted];
+        const uint16_t* gpu = (const uint16_t*)[b.C contents];
+        float maxErr=0.f;
+        for (int i=0;i<M*N;++i)
+            maxErr=std::max(maxErr,std::abs(bf16_to_f32(gpu[i])-bf16_to_f32(ref[i])));
+        printf("Correctness (M=%d N=%d K=%d): max_err=%.4f  %s\n",M,N,K,maxErr,maxErr<1.f?"PASS":"FAIL");
+    }
+    {
+        const int M=2048,N=2048,K=2048;
+        std::vector<uint16_t> hA(M*K),hB(K*N);
+        for (int i=0;i<M*K;++i) hA[i]=f32_to_bf16((i%7)*0.1f);
+        for (int i=0;i<K*N;++i) hB[i]=f32_to_bf16((i%5)*0.2f);
+        Bufs b = makeBuffers(M,N,K,hA,hB);
+        auto r = bench(10,100,[&]{return dispatch(b,M,N);});
+        r.print("03 matmul bfloat×bfloat→bfloat", 2.0*M*N*K);
+    }
+    return 0;
+}
