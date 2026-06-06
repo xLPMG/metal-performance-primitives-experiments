@@ -1,6 +1,6 @@
 // Computes C = A * B using a simple triple-nested loop on the CPU.
 // This is the baseline for performance comparison with Metal implementations.
-void cpu_gemm(float *A, float *B, float *C, int N)
+extern "C" void cpu_gemm(float *A, float *B, float *C, int N)
 {
     for (int i = 0; i < N; i++)
     {
