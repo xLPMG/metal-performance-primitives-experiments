@@ -7,6 +7,7 @@ extern "C" void cpu_gemm(float *A, float *B, float *C, int N);
 extern "C" void metal_gemm_naive(float *A, float *B, float *C, int N);
 extern "C" void metal_gemm_tiled(float *A, float *B, float *C, int N);
 extern "C" void metal_gemm_mps(float *A, float *B, float *C, int N);
+extern "C" void metal_gemm_mpp(float *A, float *B, float *C, int M, int N, int K);
 
 void fill(std::vector<float> &M, float v)
 {
@@ -29,6 +30,17 @@ bool compare(const std::vector<float> &A, const std::vector<float> &B, float eps
     return true;
 }
 
+bool compare_relative(const std::vector<float> &A, const std::vector<float> &B, float rtol = 1e-2f)
+{
+    for (size_t i = 0; i < A.size(); i++)
+    {
+        float scale = std::max(std::abs(A[i]), 1e-6f);
+        if (std::abs(A[i] - B[i]) / scale > rtol)
+            return false;
+    }
+    return true;
+}
+
 template<typename F>
 long long time_ms(F fn)
 {
@@ -40,10 +52,10 @@ long long time_ms(F fn)
 
 int main()
 {
-    int N = 1024;
+    int N = 2048;
 
     std::vector<float> A(N * N), B(N * N);
-    std::vector<float> C_cpu(N * N), C_naive(N * N), C_tiled(N * N), C_mps(N * N);
+    std::vector<float> C_cpu(N * N), C_naive(N * N), C_tiled(N * N), C_mps(N * N), C_mpp(N * N);
 
     fill_random(A);
     fill_random(B);
@@ -52,6 +64,7 @@ int main()
     metal_gemm_naive(A.data(), B.data(), C_naive.data(), N);
     metal_gemm_tiled(A.data(), B.data(), C_tiled.data(), N);
     metal_gemm_mps(A.data(), B.data(), C_mps.data(), N);
+    metal_gemm_mpp(A.data(), B.data(), C_mpp.data(), N, N, N);
 
     auto cpu_time   = time_ms([&] { cpu_gemm(A.data(), B.data(), C_cpu.data(), N); });
 
@@ -59,6 +72,7 @@ int main()
 
     auto tiled_time = time_ms([&] { metal_gemm_tiled(A.data(), B.data(), C_tiled.data(), N); });
     auto mps_time   = time_ms([&] { metal_gemm_mps(A.data(), B.data(), C_mps.data(), N); });
+    auto mpp_time   = time_ms([&] { metal_gemm_mpp(A.data(), B.data(), C_mpp.data(), N, N, N); });
 
     double flops = 2.0 * N * N * N;
     auto gflops = [&](long long ms) {
@@ -96,6 +110,12 @@ int main()
               << std::setw(12) << mps_time
               << std::setw(14) << gflops(mps_time)
               << (compare(C_cpu, C_mps) ? "yes" : "no") << "\n";
+
+    std::cout << std::left
+              << std::setw(10) << "MPP"
+              << std::setw(12) << mpp_time
+              << std::setw(14) << gflops(mpp_time)
+              << (compare_relative(C_cpu, C_mpp) ? "yes" : "no") << "\n";
 
     std::cout << "\n";
 }

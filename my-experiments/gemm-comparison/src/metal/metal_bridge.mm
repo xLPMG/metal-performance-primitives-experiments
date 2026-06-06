@@ -17,6 +17,7 @@ static id<MTLCommandQueue> commandQueue;
 // = compiled GPU programs that can be executed
 static id<MTLComputePipelineState> naivePipeline = nil;
 static id<MTLComputePipelineState> tiledPipeline = nil;
+static id<MTLComputePipelineState> mppPipeline   = nil;
 
 static id<MTLComputePipelineState> load_pipeline(const char *name, id<MTLLibrary> lib)
 {
@@ -58,6 +59,7 @@ void metal_init()
     // create pipelines for our kernels
     naivePipeline = load_pipeline("gemm_naive", lib);
     tiledPipeline = load_pipeline("gemm_tiled", lib);
+    mppPipeline   = load_pipeline("gemm_mpp",   lib);
 }
 
 void metal_shutdown()
@@ -66,6 +68,7 @@ void metal_shutdown()
     commandQueue = nil;
     naivePipeline = nil;
     tiledPipeline = nil;
+    mppPipeline   = nil;
 }
 
 void metal_gemm_naive_run(float *A, float *B, float *C, int N)
@@ -186,4 +189,72 @@ void metal_gemm_mps(float *A, float *B, float *C, int N)
     [cmd waitUntilCompleted];
 
     memcpy(C, [bufC contents], bytes);
+}
+
+// f32 -> f16 conversion (software, host-side)
+static uint16_t f32_to_f16(float f)
+{
+    // Use __fp16 if available on this toolchain
+    __fp16 h = (__fp16)f;
+    uint16_t bits;
+    __builtin_memcpy(&bits, &h, 2);
+    return bits;
+}
+
+static float f16_to_f32(uint16_t bits)
+{
+    __fp16 h;
+    __builtin_memcpy(&h, &bits, 2);
+    return (float)h;
+}
+
+void metal_gemm_mpp(float *A, float *B, float *C, int M, int N, int K)
+{
+    static bool initialized = false;
+    if (!initialized) { metal_init(); initialized = true; }
+
+    size_t elems   = (size_t)M * K;
+    size_t bytesA  = elems * sizeof(uint16_t);
+    size_t bytesB  = (size_t)K * N * sizeof(uint16_t);
+    size_t bytesC  = (size_t)M * N * sizeof(uint16_t);
+
+    // Convert f32 inputs to f16
+    id<MTLBuffer> bufA = [device newBufferWithLength:bytesA options:MTLResourceStorageModeShared];
+    id<MTLBuffer> bufB = [device newBufferWithLength:bytesB options:MTLResourceStorageModeShared];
+    id<MTLBuffer> bufC = [device newBufferWithLength:bytesC options:MTLResourceStorageModeShared];
+
+    uint16_t *pA = (uint16_t *)[bufA contents];
+    uint16_t *pB = (uint16_t *)[bufB contents];
+    for (size_t i = 0; i < (size_t)M * K; i++) pA[i] = f32_to_f16(A[i]);
+    for (size_t i = 0; i < (size_t)K * N; i++) pB[i] = f32_to_f16(B[i]);
+
+    // M, N, K as uint buffers
+    uint32_t uM = M, uN = N, uK = K;
+    id<MTLBuffer> bufM = [device newBufferWithBytes:&uM length:4 options:MTLResourceStorageModeShared];
+    id<MTLBuffer> bufN = [device newBufferWithBytes:&uN length:4 options:MTLResourceStorageModeShared];
+    id<MTLBuffer> bufK = [device newBufferWithBytes:&uK length:4 options:MTLResourceStorageModeShared];
+
+    id<MTLCommandBuffer> cmd = [commandQueue commandBuffer];
+    id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+
+    [enc setComputePipelineState:mppPipeline];
+    [enc setBuffer:bufA offset:0 atIndex:0];
+    [enc setBuffer:bufB offset:0 atIndex:1];
+    [enc setBuffer:bufC offset:0 atIndex:2];
+    [enc setBuffer:bufM offset:0 atIndex:3];
+    [enc setBuffer:bufN offset:0 atIndex:4];
+    [enc setBuffer:bufK offset:0 atIndex:5];
+
+    // One threadgroup per 64×32 output tile; 128 threads per threadgroup
+    MTLSize grid = MTLSizeMake((N + 31) / 32, (M + 63) / 64, 1);
+    MTLSize tpg  = MTLSizeMake(32, 4, 1);  // 128 threads = 4 simdgroups × 32
+
+    [enc dispatchThreadgroups:grid threadsPerThreadgroup:tpg];
+    [enc endEncoding];
+    [cmd commit];
+    [cmd waitUntilCompleted];
+
+    // Convert f16 output back to f32
+    uint16_t *pC = (uint16_t *)[bufC contents];
+    for (size_t i = 0; i < (size_t)M * N; i++) C[i] = f16_to_f32(pC[i]);
 }

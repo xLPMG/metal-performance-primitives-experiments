@@ -28,7 +28,7 @@ CPU_SRCS      := src/main.cpp src/cpu/cpu_gemm.cpp
 CPU_OBJS      := $(CPU_SRCS:%.cpp=build/%.o)
 METAL_SRCS    := src/metal/metal_bridge.mm
 METAL_OBJS    := $(METAL_SRCS:%.mm=build/%.o)
-METAL_SHADERS := shaders/gemm_naive.metal shaders/gemm_tiled.metal
+METAL_SHADERS := shaders/gemm_naive.metal shaders/gemm_tiled.metal shaders/gemm_mpp.metal
 METALLIB_OUT  := build/kernels.metallib
 
 TARGET := build/gemm
