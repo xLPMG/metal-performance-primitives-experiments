@@ -6,6 +6,7 @@
 extern "C" void cpu_gemm(float *A, float *B, float *C, int N);
 extern "C" void metal_gemm_naive(float *A, float *B, float *C, int N);
 extern "C" void metal_gemm_tiled(float *A, float *B, float *C, int N);
+extern "C" void metal_gemm_mps(float *A, float *B, float *C, int N);
 
 void fill(std::vector<float> &M, float v)
 {
@@ -42,16 +43,22 @@ int main()
     int N = 1024;
 
     std::vector<float> A(N * N), B(N * N);
-    std::vector<float> C_cpu(N * N), C_naive(N * N), C_tiled(N * N);
+    std::vector<float> C_cpu(N * N), C_naive(N * N), C_tiled(N * N), C_mps(N * N);
 
     fill_random(A);
     fill_random(B);
 
-    auto cpu_time = time_ms([&] { cpu_gemm(A.data(), B.data(), C_cpu.data(), N); });
+    // Warm up all Metal backends before timing (avoids JIT/init overhead)
+    metal_gemm_naive(A.data(), B.data(), C_naive.data(), N);
+    metal_gemm_tiled(A.data(), B.data(), C_tiled.data(), N);
+    metal_gemm_mps(A.data(), B.data(), C_mps.data(), N);
+
+    auto cpu_time   = time_ms([&] { cpu_gemm(A.data(), B.data(), C_cpu.data(), N); });
 
     auto naive_time = time_ms([&] { metal_gemm_naive(A.data(), B.data(), C_naive.data(), N); });
 
     auto tiled_time = time_ms([&] { metal_gemm_tiled(A.data(), B.data(), C_tiled.data(), N); });
+    auto mps_time   = time_ms([&] { metal_gemm_mps(A.data(), B.data(), C_mps.data(), N); });
 
     double flops = 2.0 * N * N * N;
     auto gflops = [&](long long ms) {
@@ -83,6 +90,12 @@ int main()
               << std::setw(12) << tiled_time
               << std::setw(14) << gflops(tiled_time)
               << (compare(C_cpu, C_tiled) ? "yes" : "no") << "\n";
+
+    std::cout << std::left
+              << std::setw(10) << "MPS"
+              << std::setw(12) << mps_time
+              << std::setw(14) << gflops(mps_time)
+              << (compare(C_cpu, C_mps) ? "yes" : "no") << "\n";
 
     std::cout << "\n";
 }
