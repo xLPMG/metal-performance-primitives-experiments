@@ -32,15 +32,19 @@ struct Config
 
 static std::vector<Config> build_configs()
 {
-    static const struct { int m, n; } TILES[] = {
-        {32,16}, {32,32}, {64,32}, {64,64}, {128,32}, {128,64}, {128,128}
-    };
+    static const struct
+    {
+        int m, n;
+    } TILES[] = {{32, 16}, {32, 32}, {64, 32}, {64, 64}, {128, 32}, {128, 64}, {128, 128}};
     std::vector<Config> cfgs;
     for (auto &t : TILES)
-        for (int sg = 1; sg <= 32; sg++) {
+        for (int sg = 1; sg <= 32; sg++)
+        {
             Config c;
             snprintf(c.name, sizeof(c.name), "%dx%d_sg%d", t.m, t.n, sg);
-            c.M_tile = t.m; c.N_tile = t.n; c.simdgroups = sg;
+            c.M_tile = t.m;
+            c.N_tile = t.n;
+            c.simdgroups = sg;
             cfgs.push_back(c);
         }
     return cfgs;
@@ -99,8 +103,10 @@ int main()
 
     srand(42);
     std::vector<uint16_t> hA(max_sz), hB(max_sz);
-    for (auto &x : hA) x = f32_to_f16((float)rand() / static_cast<float>(RAND_MAX));
-    for (auto &x : hB) x = f32_to_f16((float)rand() / static_cast<float>(RAND_MAX));
+    for (auto &x : hA)
+        x = f32_to_f16((float)rand() / static_cast<float>(RAND_MAX));
+    for (auto &x : hB)
+        x = f32_to_f16((float)rand() / static_cast<float>(RAND_MAX));
 
     id<MTLBuffer> bufA = [gDevice newBufferWithBytes:hA.data() length:max_sz * 2 options:MTLResourceStorageModeShared];
     id<MTLBuffer> bufB = [gDevice newBufferWithBytes:hB.data() length:max_sz * 2 options:MTLResourceStorageModeShared];
@@ -114,10 +120,15 @@ int main()
     // Find reference config (64x32_sg4) and load its PSO once
     int ref_idx = -1;
     for (int i = 0; i < N_CONFIGS; i++)
-        if (strcmp(configs[i].name, "64x32_sg4") == 0) { ref_idx = i; break; }
+        if (strcmp(configs[i].name, "64x32_sg4") == 0)
+        {
+            ref_idx = i;
+            break;
+        }
 
     NSString *ref_path = [NSString stringWithFormat:@"build/%s.metallib", configs[ref_idx].name];
-    if (![[NSFileManager defaultManager] fileExistsAtPath:ref_path]) {
+    if (![[NSFileManager defaultManager] fileExistsAtPath:ref_path])
+    {
         fprintf(stderr, "Error: reference metallib %s not found. Run 'make' first.\n", [ref_path UTF8String]);
         return 1;
     }
@@ -128,7 +139,11 @@ int main()
 
     const char *csv_path = "results.csv";
     FILE *csv = fopen(csv_path, "w");
-    if (!csv) { fprintf(stderr, "Could not open %s for writing\n", csv_path); return 1; }
+    if (!csv)
+    {
+        fprintf(stderr, "Could not open %s for writing\n", csv_path);
+        return 1;
+    }
     fprintf(csv, "config,m_tile,n_tile,simdgroups,mat_n,correct,time_us,gflops\n");
 
     for (int ni = 0; ni < N_N_VALUES; ni++)
@@ -144,12 +159,14 @@ int main()
         memcpy([bufK contents], &uN, 4);
 
         // Compute reference output for this N
-        printf("Computing reference for N=%d...\n", N); fflush(stdout);
+        printf("Computing reference for N=%d...\n", N);
+        fflush(stdout);
         dispatch_gemm(ref_pso, bufA, bufB, bufC, bufM, bufN, bufK, N, configs[ref_idx]);
         std::vector<uint16_t> ref_out(sz);
         memcpy(ref_out.data(), [bufC contents], sz * 2);
 
-        printf("Benchmarking N=%d (%d configs)...\n", N, N_CONFIGS); fflush(stdout);
+        printf("Benchmarking N=%d (%d configs)...\n", N, N_CONFIGS);
+        fflush(stdout);
 
         for (int i = 0; i < N_CONFIGS; i++)
         {
@@ -179,7 +196,8 @@ int main()
             // Timed: average over 10 runs
             const int RUNS = 10;
             long long total_us = 0;
-            for (int r = 0; r < RUNS; r++) {
+            for (int r = 0; r < RUNS; r++)
+            {
                 auto t0 = std::chrono::high_resolution_clock::now();
                 dispatch_gemm(pso, bufA, bufB, bufC, bufM, bufN, bufK, N, cfg);
                 auto t1 = std::chrono::high_resolution_clock::now();
@@ -190,7 +208,8 @@ int main()
             // Correctness vs reference
             uint16_t *pC = (uint16_t *)[bufC contents];
             bool ok = true;
-            for (size_t j = 0; j < sz && ok; j++) {
+            for (size_t j = 0; j < sz && ok; j++)
+            {
                 float got = f16_to_f32(pC[j]);
                 float exp = f16_to_f32(ref_out[j]);
                 float scale = std::max(std::abs(exp), 1e-4f);
@@ -199,11 +218,20 @@ int main()
             }
 
             double gflops = us > 0 ? flops / (us * 1e3) : 0.0;
-            fprintf(csv, "%s,%d,%d,%d,%d,%s,%lld,%.2f\n",
-                    cfg.name, cfg.M_tile, cfg.N_tile, cfg.simdgroups, N,
-                    ok ? "yes" : "no", us, gflops);
+            fprintf(
+                csv,
+                "%s,%d,%d,%d,%d,%s,%lld,%.2f\n",
+                cfg.name,
+                cfg.M_tile,
+                cfg.N_tile,
+                cfg.simdgroups,
+                N,
+                ok ? "yes" : "no",
+                us,
+                gflops);
         }
-        printf("  done.\n"); fflush(stdout);
+        printf("  done.\n");
+        fflush(stdout);
     }
 
     fclose(csv);
