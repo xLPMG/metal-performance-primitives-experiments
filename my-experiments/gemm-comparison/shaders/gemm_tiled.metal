@@ -8,14 +8,12 @@ kernel void gemm_tiled(   device const float* A [[buffer(0)]],
                             uint2 gid [[thread_position_in_grid]],
                             uint2 tid [[thread_position_in_threadgroup]])
 {
-    constexpr uint TILE_SIZE_M = 16;
-    constexpr uint TILE_SIZE_N = 16;
-    constexpr uint TILE_SIZE_K = 16;
-    uint numTiles = (N + TILE_SIZE_K - 1) / TILE_SIZE_K;
+    constexpr uint TILE = 16;
+    uint numTiles = (N + TILE - 1) / TILE;
 
     // Shared memory for tiles of A and B among threads in the same threadgroup
-    threadgroup float Asub[TILE_SIZE_M][TILE_SIZE_K];
-    threadgroup float Bsub[TILE_SIZE_K][TILE_SIZE_N];
+    threadgroup float Asub[TILE][TILE];
+    threadgroup float Bsub[TILE][TILE];
 
     uint row = gid.y;
     uint col = gid.x;
@@ -26,18 +24,18 @@ kernel void gemm_tiled(   device const float* A [[buffer(0)]],
     {
         // Load tile of A
         // zero padding for out-of-bounds
-        uint aCol = t * TILE_SIZE_K + tid.x;
+        uint aCol = t * TILE + tid.x;
         Asub[tid.y][tid.x] = (row < N && aCol < N) ? A[row * N + aCol] : 0.0f;
 
         // Load tile of B
-        uint bRow = t * TILE_SIZE_K + tid.y;
+        uint bRow = t * TILE + tid.y;
         Bsub[tid.y][tid.x] = (bRow < N && col < N) ? B[bRow * N + col] : 0.0f;
 
         // Wait for all threads to finish loading their tiles into shared memory
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
         // Compute partial product for this tile
-        for (uint k = 0; k < TILE_SIZE_K; k++)
+        for (uint k = 0; k < TILE; k++)
         {
             acc += Asub[tid.y][k] * Bsub[k][tid.x];
         }

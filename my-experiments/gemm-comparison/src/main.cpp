@@ -9,11 +9,6 @@ extern "C" void metal_gemm_tiled(float *A, float *B, float *C, int N);
 extern "C" void metal_gemm_mps(float *A, float *B, float *C, int N);
 extern "C" void metal_gemm_mpp(float *A, float *B, float *C, int M, int N, int K);
 
-void fill(std::vector<float> &M, float v)
-{
-    std::fill(M.begin(), M.end(), v);
-}
-
 void fill_random(std::vector<float> &M)
 {
     for (auto &x : M)
@@ -34,7 +29,8 @@ bool compare_relative(const std::vector<float> &A, const std::vector<float> &B, 
 {
     for (size_t i = 0; i < A.size(); i++)
     {
-        float scale = std::max(std::abs(A[i]), 1e-6f);
+        // Scale by the reference value (B) to avoid false passes when A[i] is near zero
+        float scale = std::max(std::abs(B[i]), 1e-6f);
         if (std::abs(A[i] - B[i]) / scale > rtol)
             return false;
     }
@@ -76,7 +72,7 @@ int main()
 
     double flops = 2.0 * N * N * N;
     auto gflops = [&](long long ms) {
-        return flops / (ms * 1e6);
+        return ms > 0 ? flops / (ms * 1e6) : 0.0;
     };
 
     std::cout << "\n";
