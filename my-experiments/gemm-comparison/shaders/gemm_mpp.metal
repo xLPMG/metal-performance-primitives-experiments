@@ -22,16 +22,24 @@ kernel void gemm_mpp(   device half* A [[buffer(0)]],
     //   A[m,k] = A_ptr[m*K + k]  ->  shape{K,M}, strides{1,K}
     //   B[k,n] = B_ptr[k*N + n]  ->  shape{N,K}, strides{1,N}
     //   C[m,n] = C_ptr[m*N + n]  ->  shape{N,M}, strides{1,N}
+    // ── Tile configuration ──────────────────────────────────────────────────
+    // When changing these, update metal_bridge.mm to match:
+    //   grid = MTLSizeMake((N + N_TILE-1)/N_TILE, (M + M_TILE-1)/M_TILE, 1)
+    //   tpg  = MTLSizeMake(32, SG, 1)
+    constexpr int M_TILE = 64;
+    constexpr int N_TILE = 32;
+    constexpr int SG     = 4;  // simdgroups; threads per threadgroup = SG * 32
+
     auto tensorA = tensor(A, dextents<int,2>{K, M}, array<int,2>{1, (int)K});
     auto tensorB = tensor(B, dextents<int,2>{N, K}, array<int,2>{1, (int)N});
     auto tensorC = tensor(C, dextents<int,2>{N, M}, array<int,2>{1, (int)N});
 
-    auto mA = tensorA.slice(0, tgid.y * 64); // row block is 64 rows
-    auto mB = tensorB.slice(tgid.x * 32, 0); // col block is 32 cols
-    auto mC = tensorC.slice(tgid.x * 32, tgid.y * 64);
+    auto mA = tensorA.slice(0,               tgid.y * M_TILE);
+    auto mB = tensorB.slice(tgid.x * N_TILE, 0);
+    auto mC = tensorC.slice(tgid.x * N_TILE, tgid.y * M_TILE);
 
-    constexpr auto desc = matmul2d_descriptor(64, 32, static_cast<int>(metal::dynamic_extent));
-    mpp::tensor_ops::matmul2d<desc, metal::execution_simdgroups<4>> op;
+    constexpr auto desc = matmul2d_descriptor(M_TILE, N_TILE, static_cast<int>(metal::dynamic_extent));
+    mpp::tensor_ops::matmul2d<desc, metal::execution_simdgroups<SG>> op;
 
     op.run(mA, mB, mC);
 }

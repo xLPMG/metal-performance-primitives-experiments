@@ -33,8 +33,21 @@ kernel void matmul_relu_fused(
     auto C = tensor(C_ptr, dextents<int,2>{(int)N,(int)M}, array<int,2>{1,(int)N});
 
     // ── Tile slices for this threadgroup ────────────────────────────────────
-    auto mA = A.slice(0,                (int)tgid.y * 64);
-    auto mB = B.slice((int)tgid.x * 32, 0);
+    // 
+    //  Full C matrix (M rows × N cols)
+    // ┌─────────────────────────────┐
+    // │        │        │           │
+    // │  tg00  │  tg10  │  tg20 ... │  ← each tgid.y=0 threadgroup owns 64 rows
+    // │        │        │           │
+    // ├─────────────────────────────┤
+    // │        │        │           │
+    // │  tg01  │  tg11  │  tg21 ... │  ← tgid.y=1 → rows 64..127
+    // │        │        │           │
+    // └─────────────────────────────┘
+    //   col 0   col 32   col 64        ← tgid.x steps in 32-col increments
+
+    auto mA = A.slice(0,                (int)tgid.y * 64);  // start at col=0, row=tgid.y*64
+    auto mB = B.slice((int)tgid.x * 32, 0);                 // start at col=tgid.x*32, row=0
     auto mC = C.slice((int)tgid.x * 32, (int)tgid.y * 64);
 
     // ── Create the op ───────────────────────────────────────────────────────
