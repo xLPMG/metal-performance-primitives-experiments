@@ -58,6 +58,9 @@ int main()
     fill_random(A);
     fill_random(B);
 
+    // Compute CPU reference result
+    cpu_gemm(A.data(), B.data(), C_cpu.data(), N);
+
     // Warm up all Metal backends before timing (avoids JIT/init overhead)
     // metal_gemm_naive(A.data(), B.data(), C_naive.data(), N);
     metal_gemm_tiled(A.data(), B.data(), C_tiled.data(), N);

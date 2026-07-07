@@ -292,13 +292,12 @@ void metal_gemm_mpp(float *A, float *B, float *C, int M, int N, int K)
     [enc setBuffer:bufK offset:0 atIndex:5];
 
     // Must match M_TILE, N_TILE, SG in gemm_mpp.metal.
-    // 1D dispatch with Morton ordering in the kernel for better L2 locality.
-    // Requires grid_x and grid_y to be powers of two (true when M,N are multiples of tile size).
+    // 2D dispatch: tgid.x = col tile, tgid.y = row tile.
     const int M_TILE = 64, N_TILE = 32, SG = 4;
     const int grid_x = (N + N_TILE - 1) / N_TILE;
     const int grid_y = (M + M_TILE - 1) / M_TILE;
-    MTLSize grid = MTLSizeMake(grid_x * grid_y, 1, 1);
-    MTLSize tpg  = MTLSizeMake(SG * 32, 1, 1);  // linearised: SG simdgroups × 32 threads
+    MTLSize grid = MTLSizeMake(grid_x, grid_y, 1);
+    MTLSize tpg  = MTLSizeMake(32, SG, 1);  // 2D: 32 threads × SG simdgroups
 
     [enc dispatchThreadgroups:grid threadsPerThreadgroup:tpg];
     [enc endEncoding];

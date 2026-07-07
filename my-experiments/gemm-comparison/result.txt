@@ -1,9 +1,10 @@
 For N=2048, we have the following results:
 
-Backend   Time (ms)   GFLOPS        Correct
-----------------------------------------------
-CPU       12265       1.40072       ref
-Naive     60          286.331       yes
-Tiled     31          554.189       yes
-MPS       10          1717.99       yes
-MPP       7           2454.27       yes
+Backend       Time (us)   GFLOPS          Correct
+------------------------------------------------------
+Naive         50463       340.44          yes
+Tiled         31663       542.59          yes
+MPS f32       9870        1740.61         yes
+MPS f16       7688        2234.63         yes
+MPP           7619        2254.87         yes
+MPP Morton    7561        2272.17         yes
